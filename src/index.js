@@ -12,7 +12,7 @@ const SN_BASE = 'https://stacker.news';
 const SN_GRAPHQL = `${SN_BASE}/api/graphql/`;
 const SN_MEDIA = 'https://media.stacker.news';
 const SUB_NAME = 'design';
-const POST_COUNT = 4;
+
 
 const cookieStore = new Map();
 
@@ -51,10 +51,6 @@ function loadEnv() {
       process.env[key] = value;
     }
   } catch { }
-}
-
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function delay(ms) {
@@ -139,20 +135,10 @@ async function nostrLogin() {
   return pubkey;
 }
 
-async function fetchSidebarPosts() {
-  const res = await fetch(SIDEBAR_HOMEPAGE);
-  const html = await res.text();
-  const $ = cheerio.load(html);
-
-  const daySections = $('.day');
-  if (daySections.length === 0) {
-    throw new Error('No day sections found on sidebar.io');
-  }
-
-  const firstDay = daySections.eq(0);
+function scrapePosts($) {
   const posts = [];
 
-  firstDay.find('.post-cell').each((_, el) => {
+  $('.post-cell').each((_, el) => {
     const $el = $(el);
     const title = $el.find('.post-title a').text().trim();
     if (!title) return;
@@ -172,7 +158,28 @@ async function fetchSidebarPosts() {
     posts.push({ title, url, description, categories });
   });
 
-  return posts.slice(0, POST_COUNT);
+  return posts;
+}
+
+async function fetchSidebarPosts() {
+  const res = await fetch(SIDEBAR_HOMEPAGE);
+  const html = await res.text();
+  const $ = cheerio.load(html);
+
+  const daySections = $('.day');
+  if (daySections.length === 0) {
+    throw new Error('No day sections found on sidebar.io');
+  }
+
+  return scrapePosts(daySections.eq(0));
+}
+
+async function fetchArchivesPosts() {
+  const res = await fetch(`${SIDEBAR_HOMEPAGE}archives`);
+  const html = await res.text();
+  const $ = cheerio.load(html);
+
+  return scrapePosts($);
 }
 
 function stripHtml(html) {
@@ -323,20 +330,33 @@ async function main() {
 
   await nostrLogin();
 
+  let posts = [];
+
   console.log('Fetching sidebar.io posts...');
-  const posts = await fetchSidebarPosts();
-  console.log(`Found ${posts.length} post(s) for today`);
+  try {
+    posts = await fetchSidebarPosts();
+    console.log(`Found ${posts.length} post(s) on homepage`);
+  } catch (err) {
+    console.log(`Homepage fetch failed: ${err.message}`);
+  }
+
+  if (posts.length === 0) {
+    console.log('Homepage empty, trying archives...');
+    try {
+      posts = await fetchArchivesPosts();
+      console.log(`Found ${posts.length} post(s) in archives`);
+    } catch (err) {
+      console.log(`Archives fetch failed: ${err.message}`);
+    }
+  }
 
   if (posts.length === 0) {
     console.log('No posts found. Exiting.');
     return;
   }
 
-  let posted = 0;
-  for (let i = 0; i < posts.length && posted < POST_COUNT; i++) {
-    const item = posts[i];
-
-    console.log(`\n[${i + 1}/${posts.length}] Checking: ${item.title}`);
+  for (const item of posts) {
+    console.log(`\nChecking: ${item.title}`);
     try {
       if (await isAlreadyPosted(item.url)) {
         console.log('  Already on Stacker News, skipping.');
@@ -346,21 +366,16 @@ async function main() {
       console.log(`  Dupes check failed (will proceed anyway): ${err.message}`);
     }
 
-    if (posted > 0) {
-      const waitMinutes = randomInt(11, 33);
-      console.log(`\n  Waiting ${waitMinutes} minutes before next post...`);
-      await delay(waitMinutes * 60 * 1000);
-    }
-
     try {
       await postItem(item);
-      posted++;
+      console.log('\nDone. Posted 1 item.');
+      return;
     } catch (err) {
       console.error(`  Failed to post "${item.title}": ${err.message}`);
     }
   }
 
-  console.log(`\nDone. Posted ${posted} item(s).`);
+  console.log('\nAll posts already on Stacker News. Nothing to do.');
 }
 
 main().catch(err => {
