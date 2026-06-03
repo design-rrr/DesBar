@@ -145,7 +145,13 @@ function scrapePosts($) {
 
     const outUrl = $el.find('.post-title a').attr('href') || '';
     const urlMatch = outUrl.match(/[?&]url=([^&]+)/);
-    const url = urlMatch ? decodeURIComponent(urlMatch[1]) : outUrl;
+    let url = urlMatch ? decodeURIComponent(urlMatch[1]) : outUrl;
+
+    try {
+      const parsed = new URL(url);
+      parsed.searchParams.delete('ref');
+      url = parsed.toString();
+    } catch { }
 
     const description = stripHtml($el.find('.post-body').html() || '');
 
@@ -275,22 +281,27 @@ async function takeScreenshot(url) {
 
 async function postLink(url, title, text) {
   const data = await snApiCall(`
-    mutation upsertLink($url: String!, $title: String!, $text: String, $sub: String!) {
-      upsertLink(url: $url, title: $title, text: $text, sub: $sub) {
-        result { id }
-        invoice { id satsRequested bolt11 }
+    mutation upsertLink($subNames: [String!]!, $title: String!, $url: String!, $text: String) {
+      upsertLink(subNames: $subNames, title: $title, url: $url, text: $text) {
+        id
+        payInState
+        item { id }
+        payerPrivates {
+          payInBolt11 { bolt11 msatsRequested }
+        }
       }
     }
-  `, { url, title, text, sub: SUB_NAME });
+  `, { url, title, text, subNames: [SUB_NAME] });
 
-  const item = data.upsertLink;
-  if (item.invoice && item.invoice.id) {
-    throw new Error(`Post requires ${item.invoice.satsRequested} sats payment - add CC balance or fund your SN wallet`);
+  const payIn = data.upsertLink;
+  if (payIn.payInState === 'PAID' && payIn.item?.id) {
+    return payIn.item.id;
   }
-  if (!item || !item.result || !item.result.id) {
-    throw new Error(`Failed to create post: ${JSON.stringify(data)}`);
+  if (payIn.payerPrivates?.payInBolt11) {
+    const { msatsRequested, bolt11 } = payIn.payerPrivates.payInBolt11;
+    throw new Error(`Post requires ${Number(msatsRequested) / 1000} sats payment - add CC balance or fund your SN wallet`);
   }
-  return item.result.id;
+  throw new Error(`Failed to create post: ${JSON.stringify(data)}`);
 }
 
 async function postItem(item) {
