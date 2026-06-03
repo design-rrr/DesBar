@@ -11,7 +11,7 @@ const SIDEBAR_HOMEPAGE = 'https://sidebar.io/';
 const SN_BASE = 'https://stacker.news';
 const SN_GRAPHQL = `${SN_BASE}/api/graphql/`;
 const SN_MEDIA = 'https://media.stacker.news';
-const SUB_NAME = 'design';
+const SUB_NAME = 'Design';
 
 
 const cookieStore = new Map();
@@ -135,10 +135,10 @@ async function nostrLogin() {
   return pubkey;
 }
 
-function scrapePosts($) {
+function scrapePosts($, root) {
   const posts = [];
 
-  $('.post-cell').each((_, el) => {
+  root.find('.post-cell').each((_, el) => {
     const $el = $(el);
     const title = $el.find('.post-title a').text().trim();
     if (!title) return;
@@ -177,7 +177,7 @@ async function fetchSidebarPosts() {
     throw new Error('No day sections found on sidebar.io');
   }
 
-  return scrapePosts(daySections.eq(0));
+  return scrapePosts($, daySections.eq(0));
 }
 
 async function fetchArchivesPosts() {
@@ -185,7 +185,7 @@ async function fetchArchivesPosts() {
   const html = await res.text();
   const $ = cheerio.load(html);
 
-  return scrapePosts($);
+  return scrapePosts($, $('body'));
 }
 
 function stripHtml(html) {
