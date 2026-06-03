@@ -1,0 +1,13 @@
+{
+  "name": "desbar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Posts Sidebar.io design links to Stacker.news ~Design territory",
+  "main": "src/index.js",
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "nostr-tools": "^2.23.5",
+    "playwright": "^1.52.0"
+  }
+}
