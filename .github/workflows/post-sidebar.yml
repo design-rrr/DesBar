@@ -2,10 +2,10 @@ name: Post Sidebar Links
 
 on:
   schedule:
-    - cron: '10 1 * * 0-6'
-    - cron: '32 1 * * 0-6'
-    - cron: '44 1 * * 0-6'
-    - cron: '6 2 * * 0-6'
+    - cron: '11 11 * * *'
+    - cron: '12 12 * * *'
+    - cron: '14 14 * * *'
+    - cron: '18 18 * * *'
   workflow_dispatch:
 
 jobs:
