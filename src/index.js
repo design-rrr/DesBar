@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SIDEBAR_HOMEPAGE = 'https://sidebar.io/';
 const SN_BASE = 'https://stacker.news';
 const SN_GRAPHQL = `${SN_BASE}/api/graphql/`;
-const SN_MEDIA = 'https://media.stacker.news';
+const SN_MEDIA = 'https://m.stacker.news';
 const SUB_NAME = 'Design';
 
 
@@ -51,6 +51,10 @@ function loadEnv() {
       process.env[key] = value;
     }
   } catch { }
+}
+
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function delay(ms) {
@@ -285,8 +289,10 @@ async function postLink(url, title, text) {
       upsertLink(subNames: $subNames, title: $title, url: $url, text: $text) {
         id
         payInState
-        item { id }
         payerPrivates {
+          result {
+            ... on Item { id }
+          }
           payInBolt11 { bolt11 msatsRequested }
         }
       }
@@ -294,8 +300,9 @@ async function postLink(url, title, text) {
   `, { url, title, text, subNames: [SUB_NAME] });
 
   const payIn = data.upsertLink;
-  if (payIn.payInState === 'PAID' && payIn.item?.id) {
-    return payIn.item.id;
+  if (payIn.payInState === 'PAID') {
+    const itemId = payIn.payerPrivates?.result?.id;
+    if (itemId) return itemId;
   }
   if (payIn.payerPrivates?.payInBolt11) {
     const { msatsRequested, bolt11 } = payIn.payerPrivates.payInBolt11;
@@ -386,7 +393,7 @@ async function main() {
     }
   }
 
-  console.log('\nAll posts already on Stacker News. Nothing to do.');
+  console.log('\nNo unposted items found. Nothing to do.');
 }
 
 main().catch(err => {
