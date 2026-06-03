@@ -2,7 +2,10 @@ name: Post Sidebar Links
 
 on:
   schedule:
-    - cron: '0 1 * * 1-5'
+    - cron: '0 1 * * 0-6'
+    - cron: '0 2 * * 0-6'
+    - cron: '0 3 * * 0-6'
+    - cron: '0 4 * * 0-6'
   workflow_dispatch:
 
 jobs:
@@ -21,12 +24,6 @@ jobs:
 
       - name: Install Playwright browsers
         run: npx playwright install chromium
-
-      - name: Generate random delay (0-120 min)
-        run: |
-          DELAY=$(( RANDOM % 7200 ))
-          echo "Waiting $DELAY seconds ($(( DELAY / 60 )) min) for random posting window..."
-          sleep $DELAY
 
       - name: Post sidebar links to Stacker News
         run: node src/index.js
