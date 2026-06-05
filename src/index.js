@@ -108,16 +108,38 @@ async function nostrLogin() {
   }, sk);
 
   console.log('Getting CSRF token...');
-  const csrfRes = await fetch(`${SN_BASE}/api/auth/csrf`);
-  setCookies(csrfRes.headers.getSetCookie());
-  if (!csrfRes.ok) {
-    const text = await csrfRes.text();
-    throw new Error(`CSRF endpoint returned ${csrfRes.status}: ${text}`);
+  let csrfToken = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const csrfRes = await fetch(`${SN_BASE}/api/auth/csrf`, {
+      headers: {
+        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+        'accept': 'application/json',
+        'referer': SN_BASE,
+      },
+    });
+    setCookies(csrfRes.headers.getSetCookie());
+    const csrfBody = await csrfRes.text();
+    if (csrfRes.ok && csrfBody) {
+      try { csrfToken = JSON.parse(csrfBody).csrfToken; if (csrfToken) break; } catch {}
+    }
+    if (attempt < 2) {
+      const wait = (attempt + 1) * 2000;
+      console.log(`CSRF attempt ${attempt + 1} failed (${csrfRes.status}), retrying in ${wait}ms...`);
+      await delay(wait);
+    }
   }
-  const csrfBody = await csrfRes.text();
-  if (!csrfBody) throw new Error(`CSRF returned empty body (status ${csrfRes.status})`);
-  const csrfJson = JSON.parse(csrfBody);
-  const csrfToken = csrfJson.csrfToken;
+
+  if (!csrfToken) {
+    console.log('Falling back to scraping CSRF from main page...');
+    const pageRes = await fetch(SN_BASE, {
+      headers: { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' },
+    });
+    const html = await pageRes.text();
+    const match = html.match(/"csrfToken":"([^"]+)"/);
+    if (match) csrfToken = match[1];
+  }
+
+  if (!csrfToken) throw new Error('Could not obtain CSRF token');
 
   console.log('Authenticating with Nostr...');
   const loginRes = await fetch(`${SN_BASE}/api/auth/callback/nostr`, {
