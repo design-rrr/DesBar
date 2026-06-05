@@ -85,6 +85,10 @@ async function nostrLogin() {
       query: `mutation createAuth { createAuth { k1 } }`,
     }),
   });
+  if (!authRes.ok) {
+    const text = await authRes.text();
+    throw new Error(`createAuth returned ${authRes.status}: ${text}`);
+  }
   const authJson = await authRes.json();
   if (authJson.errors) throw new Error(`createAuth error: ${JSON.stringify(authJson.errors)}`);
   const k1 = authJson.data.createAuth.k1;
@@ -104,6 +108,10 @@ async function nostrLogin() {
   console.log('Getting CSRF token...');
   const csrfRes = await fetch(`${SN_BASE}/api/auth/csrf`);
   setCookies(csrfRes.headers.getSetCookie());
+  if (!csrfRes.ok) {
+    const text = await csrfRes.text();
+    throw new Error(`CSRF endpoint returned ${csrfRes.status}: ${text}`);
+  }
   const csrfJson = await csrfRes.json();
   const csrfToken = csrfJson.csrfToken;
 
