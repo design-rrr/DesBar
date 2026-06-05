@@ -89,7 +89,9 @@ async function nostrLogin() {
     const text = await authRes.text();
     throw new Error(`createAuth returned ${authRes.status}: ${text}`);
   }
-  const authJson = await authRes.json();
+  const authBody = await authRes.text();
+  if (!authBody) throw new Error('createAuth returned empty body');
+  const authJson = JSON.parse(authBody);
   if (authJson.errors) throw new Error(`createAuth error: ${JSON.stringify(authJson.errors)}`);
   const k1 = authJson.data.createAuth.k1;
 
@@ -112,7 +114,9 @@ async function nostrLogin() {
     const text = await csrfRes.text();
     throw new Error(`CSRF endpoint returned ${csrfRes.status}: ${text}`);
   }
-  const csrfJson = await csrfRes.json();
+  const csrfBody = await csrfRes.text();
+  if (!csrfBody) throw new Error(`CSRF returned empty body (status ${csrfRes.status})`);
+  const csrfJson = JSON.parse(csrfBody);
   const csrfToken = csrfJson.csrfToken;
 
   console.log('Authenticating with Nostr...');
@@ -138,7 +142,9 @@ async function nostrLogin() {
     throw new Error(`Login failed (${loginRes.status}): ${text}`);
   }
 
-  const loginJson = await loginRes.json();
+  const loginBody = await loginRes.text();
+  if (!loginBody) throw new Error(`Login returned empty body (status ${loginRes.status})`);
+  const loginJson = JSON.parse(loginBody);
   if (!loginJson.url) {
     throw new Error(`Login failed: ${JSON.stringify(loginJson)}`);
   }
