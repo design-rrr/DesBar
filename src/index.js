@@ -33,6 +33,16 @@ function getCookieHeader() {
     .join('; ');
 }
 
+function extractCsrfFromCookies() {
+  for (const [name, value] of cookieStore) {
+    if (name.includes('csrf-token')) {
+      const token = value.split('%7C')[0].split('|')[0];
+      if (token) return token;
+    }
+  }
+  return null;
+}
+
 function loadEnv() {
   const envPath = join(__dirname, '..', '.env');
   try {
@@ -109,22 +119,16 @@ async function nostrLogin() {
 
   console.log('Getting CSRF token...');
   let csrfToken = null;
+
+  // Try CSRF endpoint — sets the token cookie even on 202
   for (let attempt = 0; attempt < 3; attempt++) {
-    const csrfRes = await fetch(`${SN_BASE}/api/auth/csrf`, {
-      headers: {
-        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-        'accept': 'application/json',
-        'referer': SN_BASE,
-      },
-    });
+    const csrfRes = await fetch(`${SN_BASE}/api/auth/csrf`);
     setCookies(csrfRes.headers.getSetCookie());
-    const csrfBody = await csrfRes.text();
-    if (csrfRes.ok && csrfBody) {
-      try { csrfToken = JSON.parse(csrfBody).csrfToken; if (csrfToken) break; } catch {}
-    }
+    csrfToken = extractCsrfFromCookies();
+    if (csrfToken) break;
     if (attempt < 2) {
       const wait = (attempt + 1) * 2000;
-      console.log(`CSRF attempt ${attempt + 1} failed (${csrfRes.status}), retrying in ${wait}ms...`);
+      console.log(`CSRF attempt ${attempt + 1} (${csrfRes.status}), retrying in ${wait}ms...`);
       await delay(wait);
     }
   }
@@ -134,9 +138,11 @@ async function nostrLogin() {
     const pageRes = await fetch(SN_BASE, {
       headers: { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' },
     });
+    setCookies(pageRes.headers.getSetCookie());
+    csrfToken = extractCsrfFromCookies();
     const html = await pageRes.text();
     const match = html.match(/"csrfToken":"([^"]+)"/);
-    if (match) csrfToken = match[1];
+    if (!csrfToken && match) csrfToken = match[1];
   }
 
   if (!csrfToken) throw new Error('Could not obtain CSRF token');
