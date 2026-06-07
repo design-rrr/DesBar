@@ -414,10 +414,30 @@ async function postItem(item) {
   return postId;
 }
 
+async function runDry(posts) {
+  console.log('\n========================================');
+  console.log('  DRY RUN — no posts will be created');
+  console.log('========================================\n');
+
+  for (const item of posts) {
+    console.log(`  Title:       ${item.title}`);
+    console.log(`  URL:         ${item.url}`);
+    console.log(`  Description: ${item.description.slice(0, 120)}${item.description.length > 120 ? '...' : ''}`);
+    console.log(`  Categories:  ${item.categories.join(', ') || '(none)'}`);
+
+    const hashtags = item.categories.map(c => `#${c.replace(/\s+/g, '')}`).join(' ');
+    const text = `![](${SN_MEDIA}/{screenshot-id})\n\n${item.description}\n\n- - -\n\n${hashtags}`;
+    console.log(`\n  Post body preview:\n${text}\n`);
+    console.log('  ---');
+  }
+
+  console.log(`\nTotal: ${posts.length} post(s) ready to publish.\n`);
+}
+
 async function main() {
   loadEnv();
 
-  await nostrLogin();
+  const isDryRun = process.env.DRY_RUN === 'true';
 
   let posts = [];
 
@@ -443,6 +463,13 @@ async function main() {
     console.log('No posts found. Exiting.');
     return;
   }
+
+  if (isDryRun) {
+    await runDry(posts);
+    return;
+  }
+
+  await nostrLogin();
 
   for (const item of posts) {
     console.log(`\nChecking: ${item.title}`);
