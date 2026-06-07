@@ -80,6 +80,42 @@ function getPrivateKeyBytes(nostrSecret) {
   return new Uint8Array(Buffer.from(hex, 'hex'));
 }
 
+async function getCsrfTokenWithBrowser() {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    await page.goto(`${SN_BASE}/api/auth/csrf`, {
+      waitUntil: 'networkidle',
+      timeout: 30000,
+    });
+    await delay(1000);
+
+    const cookies = await context.cookies();
+    for (const cookie of cookies) {
+      cookieStore.set(cookie.name, cookie.value);
+    }
+
+    const token = extractCsrfFromCookies();
+    if (token) return token;
+
+    const body = await page.evaluate(() => document.body.innerText);
+    try {
+      const json = JSON.parse(body);
+      if (json.csrfToken) return json.csrfToken;
+    } catch {}
+
+    const html = await page.content();
+    const match = html.match(/"csrfToken":"([^"]+)"/);
+    if (match) return match[1];
+
+    return null;
+  } finally {
+    await browser.close();
+  }
+}
+
 async function nostrLogin() {
   const secret = process.env.NOSTR_SECRET;
   if (!secret) throw new Error('NOSTR_SECRET not set');
@@ -120,7 +156,7 @@ async function nostrLogin() {
   console.log('Getting CSRF token...');
   let csrfToken = null;
 
-  // Try CSRF endpoint — sets the token cookie even on 202
+  // Try simple fetch first (works locally, often WAF-blocked from GH Actions)
   for (let attempt = 0; attempt < 3; attempt++) {
     const csrfRes = await fetch(`${SN_BASE}/api/auth/csrf`);
     setCookies(csrfRes.headers.getSetCookie());
@@ -134,15 +170,8 @@ async function nostrLogin() {
   }
 
   if (!csrfToken) {
-    console.log('Falling back to scraping CSRF from main page...');
-    const pageRes = await fetch(SN_BASE, {
-      headers: { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' },
-    });
-    setCookies(pageRes.headers.getSetCookie());
-    csrfToken = extractCsrfFromCookies();
-    const html = await pageRes.text();
-    const match = html.match(/"csrfToken":"([^"]+)"/);
-    if (!csrfToken && match) csrfToken = match[1];
+    console.log('Fetch failed, trying headless browser...');
+    csrfToken = await getCsrfTokenWithBrowser();
   }
 
   if (!csrfToken) throw new Error('Could not obtain CSRF token');
