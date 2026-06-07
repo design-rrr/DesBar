@@ -434,43 +434,7 @@ async function runDry(posts) {
   console.log(`\nTotal: ${posts.length} post(s) ready to publish.\n`);
 }
 
-async function main() {
-  loadEnv();
-
-  const isDryRun = process.env.DRY_RUN === 'true';
-
-  let posts = [];
-
-  console.log('Fetching sidebar.io posts...');
-  try {
-    posts = await fetchSidebarPosts();
-    console.log(`Found ${posts.length} post(s) on homepage`);
-  } catch (err) {
-    console.log(`Homepage fetch failed: ${err.message}`);
-  }
-
-  if (posts.length === 0) {
-    console.log('Homepage empty, trying archives...');
-    try {
-      posts = await fetchArchivesPosts();
-      console.log(`Found ${posts.length} post(s) in archives`);
-    } catch (err) {
-      console.log(`Archives fetch failed: ${err.message}`);
-    }
-  }
-
-  if (posts.length === 0) {
-    console.log('No posts found. Exiting.');
-    return;
-  }
-
-  if (isDryRun) {
-    await runDry(posts);
-    return;
-  }
-
-  await nostrLogin();
-
+async function tryPostOne(posts) {
   for (const item of posts) {
     console.log(`\nChecking: ${item.title}`);
     try {
@@ -485,10 +449,55 @@ async function main() {
     try {
       await postItem(item);
       console.log('\nDone. Posted 1 item.');
-      return;
+      return true;
     } catch (err) {
       console.error(`  Failed to post "${item.title}": ${err.message}`);
     }
+  }
+  return false;
+}
+
+async function main() {
+  loadEnv();
+
+  const isDryRun = process.env.DRY_RUN === 'true';
+
+  console.log('Fetching sidebar.io posts...');
+  let posts;
+  try {
+    posts = await fetchSidebarPosts();
+    console.log(`Found ${posts.length} post(s) on homepage`);
+  } catch (err) {
+    console.log(`Homepage fetch failed: ${err.message}`);
+    posts = [];
+  }
+
+  if (isDryRun) {
+    if (posts.length === 0) {
+      console.log('No posts found. Exiting.');
+    } else {
+      await runDry(posts);
+    }
+    return;
+  }
+
+  await nostrLogin();
+
+  if (posts.length > 0) {
+    if (await tryPostOne(posts)) return;
+    console.log('All homepage posts already on Stacker News, trying archives...');
+  }
+
+  try {
+    posts = await fetchArchivesPosts();
+    console.log(`Found ${posts.length} post(s) in archives`);
+  } catch (err) {
+    console.log(`Archives fetch failed: ${err.message}`);
+    posts = [];
+  }
+
+  if (posts.length > 0) {
+    if (await tryPostOne(posts)) return;
   }
 
   console.log('\nNo unposted items found. Nothing to do.');
