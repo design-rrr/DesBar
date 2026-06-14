@@ -210,20 +210,20 @@ async function nostrLogin() {
   return pubkey;
 }
 
-async function fetchSidebarPosts(limit = 50) {
+async function fetchSidebarPosts() {
   const res = await fetch(SIDEBAR_GRAPHQL, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      query: `query { homepagePosts }`,
+      query: `query { posts { results { _id title url body categories { name } } } }`,
     }),
   });
 
   const json = await res.json();
-  const raw = json.data?.homepagePosts;
-  if (!raw || !raw.length) throw new Error('No posts returned from sidebar.io GraphQL');
+  const results = json.data?.posts?.results;
+  if (!results || !results.length) throw new Error('No posts returned from sidebar.io GraphQL');
 
-  return raw.map(p => ({
+  return results.map(p => ({
     title: p.title,
     url: p.url,
     description: p.body || '',
