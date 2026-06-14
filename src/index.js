@@ -1,13 +1,13 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import * as cheerio from 'cheerio';
 import { chromium } from 'playwright';
 import { getPublicKey, finalizeEvent, nip19 } from 'nostr-tools';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const SIDEBAR_HOMEPAGE = 'https://sidebar.io/';
+const SIDEBAR_GRAPHQL = 'https://sidebar.io/graphql';
 const SN_BASE = 'https://stacker.news';
 const SN_GRAPHQL = `${SN_BASE}/api/graphql/`;
 const SN_MEDIA = 'https://m.stacker.news';
@@ -210,64 +210,25 @@ async function nostrLogin() {
   return pubkey;
 }
 
-function scrapePosts($, root) {
-  const posts = [];
-
-  root.find('.post-cell').each((_, el) => {
-    const $el = $(el);
-    const title = $el.find('.post-title a').text().trim();
-    if (!title) return;
-
-    const outUrl = $el.find('.post-title a').attr('href') || '';
-    const urlMatch = outUrl.match(/[?&]url=([^&]+)/);
-    let url = urlMatch ? decodeURIComponent(urlMatch[1]) : outUrl;
-
-    try {
-      const parsed = new URL(url);
-      parsed.searchParams.delete('ref');
-      url = parsed.toString();
-    } catch { }
-
-    const description = stripHtml($el.find('.post-body').html() || '');
-
-    const categories = [];
-    $el.find('.category-cell').each((__, catEl) => {
-      const name = $(catEl).text().trim();
-      if (name) categories.push(name);
-    });
-
-    posts.push({ title, url, description, categories });
+async function fetchSidebarPosts(limit = 50) {
+  const res = await fetch(SIDEBAR_GRAPHQL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      query: `query { homepagePosts }`,
+    }),
   });
 
-  return posts;
-}
+  const json = await res.json();
+  const raw = json.data?.homepagePosts;
+  if (!raw || !raw.length) throw new Error('No posts returned from sidebar.io GraphQL');
 
-async function fetchSidebarPosts() {
-  const res = await fetch(SIDEBAR_HOMEPAGE);
-  const html = await res.text();
-  const $ = cheerio.load(html);
-
-  const daySections = $('.day');
-  if (daySections.length === 0) {
-    throw new Error('No day sections found on sidebar.io');
-  }
-
-  return scrapePosts($, daySections.eq(0));
-}
-
-async function fetchArchivesPosts() {
-  const res = await fetch(`${SIDEBAR_HOMEPAGE}archives`);
-  const html = await res.text();
-  const $ = cheerio.load(html);
-
-  return scrapePosts($, $('body'));
-}
-
-function stripHtml(html) {
-  return html
-    .replace(/<[^>]*>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return raw.map(p => ({
+    title: p.title,
+    url: p.url,
+    description: p.body || '',
+    categories: (p.categories || []).map(c => c.name).filter(Boolean),
+  }));
 }
 
 function formatDescription(description, categories) {
@@ -301,8 +262,11 @@ async function isAlreadyPosted(url) {
         dupes(url: $url) { id }
       }
     `, { url });
-    return data.dupes && data.dupes.length > 0;
-  } catch {
+    const found = data.dupes && data.dupes.length;
+    if (found) console.log(`    → ${found} dupe(s) found on SN for: ${url}`);
+    return found > 0;
+  } catch (err) {
+    console.log(`    → dupe check errored: ${err.message}`);
     return false;
   }
 }
@@ -382,9 +346,27 @@ async function postLink(url, title, text) {
   throw new Error(`Failed to create post: ${JSON.stringify(data)}`);
 }
 
+async function isLinkAlive(url) {
+  try {
+    const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(10000) });
+    if (!res.ok) {
+      console.log(`  Link returned ${res.status}, skipping.`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.log(`  Link check failed (${err.message}), proceeding anyway.`);
+    return true;
+  }
+}
+
 async function postItem(item) {
   console.log(`\n  Posting: ${item.title}`);
   console.log(`  URL: ${item.url}`);
+
+  if (!(await isLinkAlive(item.url))) {
+    return null;
+  }
 
   let imageUrl = null;
   try {
@@ -447,7 +429,8 @@ async function tryPostOne(posts) {
     }
 
     try {
-      await postItem(item);
+      const result = await postItem(item);
+      if (result === null) continue;
       console.log('\nDone. Posted 1 item.');
       return true;
     } catch (err) {
@@ -466,9 +449,9 @@ async function main() {
   let posts;
   try {
     posts = await fetchSidebarPosts();
-    console.log(`Found ${posts.length} post(s) on homepage`);
+    console.log(`Found ${posts.length} post(s)`);
   } catch (err) {
-    console.log(`Homepage fetch failed: ${err.message}`);
+    console.log(`Sidebar fetch failed: ${err.message}`);
     posts = [];
   }
 
@@ -482,19 +465,6 @@ async function main() {
   }
 
   await nostrLogin();
-
-  if (posts.length > 0) {
-    if (await tryPostOne(posts)) return;
-    console.log('All homepage posts already on Stacker News, trying archives...');
-  }
-
-  try {
-    posts = await fetchArchivesPosts();
-    console.log(`Found ${posts.length} post(s) in archives`);
-  } catch (err) {
-    console.log(`Archives fetch failed: ${err.message}`);
-    posts = [];
-  }
 
   if (posts.length > 0) {
     if (await tryPostOne(posts)) return;
