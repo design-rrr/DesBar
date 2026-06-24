@@ -308,7 +308,7 @@ async function takeScreenshot(url) {
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto(url, { waitUntil: 'load', timeout: 30000 });
     await delay(2000);
     const buffer = await page.screenshot({ type: 'png', fullPage: false });
     const { width, height } = page.viewportSize();
