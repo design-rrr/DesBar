@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { chromium } from 'playwright';
-import { getPublicKey, finalizeEvent, nip19 } from 'nostr-tools';
+import { getPublicKey, finalizeEvent, nip19, SimplePool } from 'nostr-tools';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -12,6 +12,14 @@ const SN_BASE = 'https://stacker.news';
 const SN_GRAPHQL = `${SN_BASE}/api/graphql/`;
 const SN_MEDIA = 'https://m.stacker.news';
 const SUB_NAME = 'Design';
+
+const BLOSSOM_SERVER = process.env.BLOSSOM_SERVER || 'https://cdn.hzrd149.com';
+const NOSTR_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.primal.net',
+  'wss://relay.nostr.band',
+];
 
 
 const cookieStore = new Map();
@@ -207,7 +215,7 @@ async function nostrLogin() {
   }
 
   console.log(`Authenticated as ${pubkey}`);
-  return pubkey;
+  return { pubkey, sk };
 }
 
 async function fetchSidebarPosts() {
@@ -304,6 +312,69 @@ async function uploadToS3(signedPost, imageBuffer, type) {
   return `${SN_MEDIA}/${key}`;
 }
 
+async function sha256(buffer) {
+  const hash = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function base64url(json) {
+  return Buffer.from(JSON.stringify(json)).toString('base64url');
+}
+
+async function uploadToBlossom(buffer, mimeType, sk) {
+  const hash = await sha256(buffer);
+  const expiration = Math.floor(Date.now() / 1000) + 300;
+
+  const event = finalizeEvent({
+    kind: 24242,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['t', 'upload'],
+      ['expiration', String(expiration)],
+      ['x', hash],
+      ['m', mimeType],
+      ['size', String(buffer.length)],
+    ],
+    content: 'Upload screenshot for sidebar post',
+  }, sk);
+
+  const res = await fetch(`${BLOSSOM_SERVER}/upload`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Nostr ${base64url(event)}`,
+      'Content-Type': mimeType,
+      'Content-Length': String(buffer.length),
+      'X-SHA-256': hash,
+    },
+    body: buffer,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Blossom upload failed (${res.status}): ${text}`);
+  }
+
+  const data = await res.json().catch(() => ({}));
+  return data.url || `${BLOSSOM_SERVER}/${hash}.png`;
+}
+
+async function publishNostrNote(content, sk) {
+  const event = finalizeEvent({
+    kind: 1,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [],
+    content,
+  }, sk);
+
+  const pool = new SimplePool();
+  const pubs = pool.publish(NOSTR_RELAYS, event);
+  await Promise.allSettled(pubs);
+  pool.close(NOSTR_RELAYS);
+
+  console.log(`  Published Nostr note: ${event.id}`);
+  return event.id;
+}
+
 async function takeScreenshot(url) {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -360,7 +431,7 @@ async function isLinkAlive(url) {
   }
 }
 
-async function postItem(item) {
+async function postItem(item, sk) {
   console.log(`\n  Posting: ${item.title}`);
   console.log(`  URL: ${item.url}`);
 
@@ -368,30 +439,60 @@ async function postItem(item) {
     return null;
   }
 
-  let imageUrl = null;
+  let imageBuffer, imageType, width, height;
   try {
     console.log('  Taking screenshot...');
-    const { buffer, width, height, type } = await takeScreenshot(item.url);
-    const size = buffer.length;
+    const shot = await takeScreenshot(item.url);
+    imageBuffer = shot.buffer;
+    imageType = shot.type;
+    width = shot.width;
+    height = shot.height;
 
-    console.log(`  Screenshot: ${width}x${height}, ${(size / 1024).toFixed(1)}KB`);
-
-    console.log('  Getting signed upload URL...');
-    const signedPost = await getSignedPost(type, size, width, height);
-
-    console.log('  Uploading to SN media server...');
-    imageUrl = await uploadToS3(signedPost, buffer, type);
-    console.log(`  Image URL: ${imageUrl}`);
+    console.log(`  Screenshot: ${width}x${height}, ${(imageBuffer.length / 1024).toFixed(1)}KB`);
   } catch (err) {
     console.log(`  Screenshot failed (will post without image): ${err.message}`);
   }
 
+  let blossomUrl = null;
+  if (imageBuffer) {
+    try {
+      console.log('  Uploading to Blossom...');
+      blossomUrl = await uploadToBlossom(imageBuffer, imageType, sk);
+      console.log(`  Blossom URL: ${blossomUrl}`);
+    } catch (err) {
+      console.log(`  Blossom upload failed: ${err.message}`);
+    }
+  }
+
+  let snImageUrl = null;
+  if (imageBuffer) {
+    try {
+      console.log('  Getting signed upload URL...');
+      const signedPost = await getSignedPost(imageType, imageBuffer.length, width, height);
+
+      console.log('  Uploading to SN media server...');
+      snImageUrl = await uploadToS3(signedPost, imageBuffer, imageType);
+      console.log(`  SN image URL: ${snImageUrl}`);
+    } catch (err) {
+      console.log(`  SN media upload failed (will post without image): ${err.message}`);
+    }
+  }
+
   const description = formatDescription(item.description, item.categories);
-  const text = imageUrl ? `![](${imageUrl})\n\n${description}` : description;
+  const snText = snImageUrl ? `![](${snImageUrl})\n\n${description}` : description;
 
   console.log('  Creating Stacker News post...');
-  const postId = await postLink(item.url, item.title, text);
-  console.log(`  Posted! Item ID: https://stacker.news/items/${postId}`);
+  const postId = await postLink(item.url, item.title, snText);
+  const snUrl = `https://stacker.news/items/${postId}/r/deSign_r`;
+  console.log(`  Posted! ${snUrl}`);
+
+  const noteContent = `Title: ${item.title}\n\n${blossomUrl ? `![](${blossomUrl})\n\n` : ''}${description}\n\n${snUrl}`;
+  try {
+    console.log('  Publishing Nostr note...');
+    await publishNostrNote(noteContent, sk);
+  } catch (err) {
+    console.log(`  Nostr publish failed: ${err.message}`);
+  }
 
   return postId;
 }
@@ -416,7 +517,7 @@ async function runDry(posts) {
   console.log(`\nTotal: ${posts.length} post(s) ready to publish.\n`);
 }
 
-async function tryPostOne(posts) {
+async function tryPostOne(posts, sk) {
   for (const item of posts) {
     console.log(`\nChecking: ${item.title}`);
     try {
@@ -429,7 +530,7 @@ async function tryPostOne(posts) {
     }
 
     try {
-      const result = await postItem(item);
+      const result = await postItem(item, sk);
       if (result === null) continue;
       console.log('\nDone. Posted 1 item.');
       return true;
@@ -464,10 +565,10 @@ async function main() {
     return;
   }
 
-  await nostrLogin();
+  const { sk } = await nostrLogin();
 
   if (posts.length > 0) {
-    if (await tryPostOne(posts)) return;
+    if (await tryPostOne(posts, sk)) return;
   }
 
   console.log('\nNo unposted items found. Nothing to do.');
