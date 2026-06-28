@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { chromium } from 'playwright';
 import { getPublicKey, finalizeEvent, nip19, SimplePool } from 'nostr-tools';
+import { TwitterApi } from 'twitter-api-v2';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -375,6 +376,30 @@ async function publishNostrNote(content, sk) {
   return event.id;
 }
 
+async function postToTwitter(text, imageBuffer) {
+  const TWITTER_CREDENTIALS = {
+    appKey: process.env.TWITTER_API_KEY,
+    appSecret: process.env.TWITTER_API_SECRET,
+    accessToken: process.env.TWITTER_ACCESS_TOKEN,
+    accessSecret: process.env.TWITTER_ACCESS_SECRET,
+  };
+  if (!TWITTER_CREDENTIALS.appKey) {
+    console.log('  Twitter credentials not configured, skipping.');
+    return;
+  }
+
+  const client = new TwitterApi(TWITTER_CREDENTIALS);
+  let mediaId;
+  if (imageBuffer) {
+    mediaId = await client.v1.uploadMedia(imageBuffer, { mimeType: 'image/png' });
+  }
+  await client.v2.tweet({
+    text: text.slice(0, 4000),
+    media: mediaId ? { media_ids: [mediaId] } : undefined,
+  });
+  console.log('  Posted to Twitter/X');
+}
+
 async function takeScreenshot(url) {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -481,6 +506,12 @@ async function postItem(item, sk) {
   const description = formatDescription(item.description, item.categories);
   const snText = snImageUrl ? `![](${snImageUrl})\n\n${description}` : description;
 
+  console.log('  Checking dupe on SN one more time...');
+  if (await isAlreadyPosted(item.url)) {
+    console.log('  Already on Stacker News (re-checked), skipping.');
+    return null;
+  }
+
   console.log('  Creating Stacker News post...');
   const postId = await postLink(item.url, item.title, snText);
   const snUrl = `https://stacker.news/items/${postId}/r/deSign_r`;
@@ -493,6 +524,13 @@ async function postItem(item, sk) {
     await publishNostrNote(noteContent, sk);
   } catch (err) {
     console.log(`  Nostr publish failed: ${err.message}`);
+  }
+
+  try {
+    console.log('  Posting to Twitter/X...');
+    await postToTwitter(noteContent, imageBuffer);
+  } catch (err) {
+    console.log(`  Twitter post failed: ${err.message}`);
   }
 
   return postId;
