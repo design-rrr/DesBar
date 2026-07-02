@@ -22,6 +22,26 @@ const NOSTR_RELAYS = [
   'wss://relay.nostr.band',
 ];
 
+const postedInRun = new Set();
+
+function normalizeUrl(url) {
+  try {
+    const u = new URL(url);
+    u.hostname = u.hostname.replace(/^www\./, '').toLowerCase();
+    u.pathname = u.pathname.replace(/\/$/, '') || '/';
+    const keep = [];
+    for (const [k, v] of u.searchParams) {
+      if (['ref', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'si', 'sk', 'source'].includes(k)) continue;
+      keep.push(`${k}=${v}`);
+    }
+    keep.sort();
+    u.search = keep.length ? '?' + keep.join('&') : '';
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 
 const cookieStore = new Map();
 
@@ -265,14 +285,15 @@ async function snApiCall(query, variables) {
 }
 
 async function isAlreadyPosted(url) {
+  const normalUrl = normalizeUrl(url);
   try {
     const data = await snApiCall(`
       query dupes($url: String!) {
         dupes(url: $url) { id }
       }
-    `, { url });
+    `, { url: normalUrl });
     const found = data.dupes && data.dupes.length;
-    if (found) console.log(`    → ${found} dupe(s) found on SN for: ${url}`);
+    if (found) console.log(`    → ${found} dupe(s) found on SN for: ${normalUrl}`);
     return found > 0;
   } catch (err) {
     console.log(`    → dupe check errored: ${err.message}`);
@@ -506,14 +527,16 @@ async function postItem(item, sk) {
   const description = formatDescription(item.description, item.categories);
   const snText = snImageUrl ? `![](${snImageUrl})\n\n${description}` : description;
 
+  const normalUrl = normalizeUrl(item.url);
+
   console.log('  Checking dupe on SN one more time...');
-  if (await isAlreadyPosted(item.url)) {
+  if (await isAlreadyPosted(normalUrl)) {
     console.log('  Already on Stacker News (re-checked), skipping.');
     return null;
   }
 
   console.log('  Creating Stacker News post...');
-  const postId = await postLink(item.url, item.title, snText);
+  const postId = await postLink(normalUrl, item.title, snText);
   const snUrl = `https://stacker.news/items/${postId}/r/deSign_r`;
   console.log(`  Posted! ${snUrl}`);
 
@@ -558,10 +581,18 @@ async function runDry(posts) {
 
 async function tryPostOne(posts, sk) {
   for (const item of posts) {
+    const normalUrl = normalizeUrl(item.url);
     console.log(`\nChecking: ${item.title}`);
+
+    if (postedInRun.has(normalUrl)) {
+      console.log('  Already posted in this run, skipping.');
+      continue;
+    }
+
     try {
       if (await isAlreadyPosted(item.url)) {
         console.log('  Already on Stacker News, skipping.');
+        postedInRun.add(normalUrl);
         continue;
       }
     } catch (err) {
@@ -571,6 +602,7 @@ async function tryPostOne(posts, sk) {
     try {
       const result = await postItem(item, sk);
       if (result === null) continue;
+      postedInRun.add(normalUrl);
       console.log('\nDone. Posted 1 item.');
       return true;
     } catch (err) {
