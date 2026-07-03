@@ -29,6 +29,7 @@ function normalizeUrl(url) {
     const u = new URL(url);
     u.hostname = u.hostname.replace(/^www\./, '').toLowerCase();
     u.pathname = u.pathname.replace(/\/$/, '') || '/';
+    u.hash = '';
     const keep = [];
     for (const [k, v] of u.searchParams) {
       if (['ref', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'si', 'sk', 'source'].includes(k)) continue;
