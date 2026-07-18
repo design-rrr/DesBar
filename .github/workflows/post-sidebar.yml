@@ -32,6 +32,13 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium
 
+      - name: Restore posted URLs cache
+        uses: actions/cache@v4
+        with:
+          path: posted-urls.json
+          key: posted-urls-v1
+          save-always: true
+
       - name: Random delay (0-11 min) for posting window
         if: ${{ !inputs.DRY_RUN }}
         run: sleep $(( RANDOM % 660 ))
