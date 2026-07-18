@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { chromium } from 'playwright';
@@ -22,7 +22,27 @@ const NOSTR_RELAYS = [
   'wss://relay.nostr.band',
 ];
 
-const postedInRun = new Set();
+const CACHE_FILE = join(__dirname, '..', 'posted-urls.json');
+
+function loadPostedUrls() {
+  try {
+    const arr = JSON.parse(readFileSync(CACHE_FILE, 'utf8'));
+    return new Set(arr);
+  } catch {
+    return new Set();
+  }
+}
+
+function savePostedUrlCache(url) {
+  postedUrls.add(url);
+  try {
+    writeFileSync(CACHE_FILE, JSON.stringify([...postedUrls]));
+  } catch (err) {
+    console.log(`  → Failed to save cache: ${err.message}`);
+  }
+}
+
+const postedUrls = loadPostedUrls();
 
 function normalizeUrl(url) {
   try {
@@ -557,6 +577,8 @@ async function postItem(item, sk) {
     console.log(`  Twitter post failed: ${err.message}`);
   }
 
+  savePostedUrlCache(normalUrl);
+
   return postId;
 }
 
@@ -585,15 +607,15 @@ async function tryPostOne(posts, sk) {
     const normalUrl = normalizeUrl(item.url);
     console.log(`\nChecking: ${item.title}`);
 
-    if (postedInRun.has(normalUrl)) {
-      console.log('  Already posted in this run, skipping.');
+    if (postedUrls.has(normalUrl)) {
+      console.log('  Already posted (cache), skipping.');
       continue;
     }
 
     try {
       if (await isAlreadyPosted(item.url)) {
         console.log('  Already on Stacker News, skipping.');
-        postedInRun.add(normalUrl);
+        savePostedUrlCache(normalUrl);
         continue;
       }
     } catch (err) {
@@ -603,7 +625,6 @@ async function tryPostOne(posts, sk) {
     try {
       const result = await postItem(item, sk);
       if (result === null) continue;
-      postedInRun.add(normalUrl);
       console.log('\nDone. Posted 1 item.');
       return true;
     } catch (err) {
