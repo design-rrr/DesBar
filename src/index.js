@@ -307,19 +307,23 @@ async function snApiCall(query, variables) {
 
 async function isAlreadyPosted(url) {
   const normalUrl = normalizeUrl(url);
-  try {
-    const data = await snApiCall(`
-      query dupes($url: String!) {
-        dupes(url: $url) { id }
-      }
-    `, { url: normalUrl });
-    const found = data.dupes && data.dupes.length;
-    if (found) console.log(`    → ${found} dupe(s) found on SN for: ${normalUrl}`);
-    return found > 0;
-  } catch (err) {
-    console.log(`    → dupe check errored: ${err.message}`);
-    return false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const data = await snApiCall(`
+        query dupes($url: String!) {
+          dupes(url: $url) { id }
+        }
+      `, { url: normalUrl });
+      const found = data.dupes && data.dupes.length;
+      if (found) console.log(`    → ${found} dupe(s) found on SN for: ${normalUrl}`);
+      return found > 0;
+    } catch (err) {
+      console.log(`    → dupe check errored (attempt ${attempt + 1}): ${err.message}`);
+      if (attempt === 0) await delay(2000);
+    }
   }
+  console.log(`    → dupe check FAILED after retries, treating as duplicate to be safe`);
+  return true;
 }
 
 async function getSignedPost(type, size, width, height) {
@@ -619,7 +623,8 @@ async function tryPostOne(posts, sk) {
         continue;
       }
     } catch (err) {
-      console.log(`  Dupes check failed (will proceed anyway): ${err.message}`);
+      console.log(`  Dupes check failed (skipping to be safe): ${err.message}`);
+      continue;
     }
 
     try {
@@ -648,6 +653,8 @@ async function main() {
     console.log(`Sidebar fetch failed: ${err.message}`);
     posts = [];
   }
+
+  console.log(`Loaded ${postedUrls.size} previously posted URL(s) from cache.`);
 
   if (isDryRun) {
     if (posts.length === 0) {
