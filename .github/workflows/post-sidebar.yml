@@ -33,11 +33,10 @@ jobs:
         run: npx playwright install chromium
 
       - name: Restore posted URLs cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: posted-urls.json
           key: posted-urls-v1
-          save-always: true
 
       - name: Random delay (0-11 min) for posting window
         if: ${{ !inputs.DRY_RUN }}
@@ -52,3 +51,10 @@ jobs:
           TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
           TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
           TWITTER_ACCESS_SECRET: ${{ secrets.TWITTER_ACCESS_SECRET }}
+
+      - name: Save posted URLs cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: posted-urls.json
+          key: posted-urls-v1
