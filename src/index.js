@@ -34,7 +34,7 @@ function loadPostedUrls() {
 }
 
 function savePostedUrlCache(url) {
-  postedUrls.add(url);
+  if (url) postedUrls.add(url);
   try {
     writeFileSync(CACHE_FILE, JSON.stringify([...postedUrls]));
   } catch (err) {
@@ -335,25 +335,65 @@ async function snApiCall(query, variables) {
   return json.data;
 }
 
-async function isAlreadyPosted(url) {
-  const normalUrl = normalizeUrl(url);
-  for (let attempt = 0; attempt < 2; attempt++) {
+async function fetchRecentDesignUrls() {
+  const urls = new Set();
+  let cursor = null;
+  for (let page = 0; page < 6; page++) {
     try {
+      const afterArg = cursor ? `, after: "${cursor}"` : '';
       const data = await snApiCall(`
-        query dupes($url: String!) {
-          dupes(url: $url) { id }
+        {
+          items(sub: "${SUB_NAME}", sort: "recent", limit: 50${afterArg}) {
+            items { url }
+            cursor
+          }
         }
-      `, { url: normalUrl });
-      const found = data.dupes && data.dupes.length;
-      if (found) console.log(`    → ${found} dupe(s) found on SN for: ${normalUrl}`);
-      return found > 0;
+      `);
+      const items = data.items?.items || [];
+      for (const item of items) {
+        if (item.url) urls.add(normalizeUrl(item.url));
+      }
+      cursor = data.items?.cursor;
+      if (!cursor || items.length === 0) break;
     } catch (err) {
-      console.log(`    → dupe check errored (attempt ${attempt + 1}): ${err.message}`);
-      if (attempt === 0) await delay(2000);
+      console.log(`  Failed to fetch Design items page ${page + 1}: ${err.message}`);
+      break;
     }
   }
-  console.log(`    → dupe check FAILED after retries, treating as duplicate to be safe`);
-  return true;
+  return urls;
+}
+
+async function isAlreadyPosted(url) {
+  const normalUrl = normalizeUrl(url);
+  const variants = normalUrl !== url ? [normalUrl, url] : [normalUrl];
+  let anySucceeded = false;
+  for (const variant of variants) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const data = await snApiCall(`
+          query dupes($url: String!) {
+            dupes(url: $url) { id }
+          }
+        `, { url: variant });
+        const found = data.dupes && data.dupes.length;
+        if (found) {
+          console.log(`    → ${found} dupe(s) found on SN for: ${variant}`);
+          return true;
+        }
+        anySucceeded = true;
+        break;
+      } catch (err) {
+        console.log(`    → dupe check errored (${variant}, attempt ${attempt + 1}): ${err.message}`);
+        if (attempt === 0) await delay(2000);
+      }
+    }
+  }
+  if (!anySucceeded) {
+    console.log(`    → All dupe checks failed, treating as duplicate to be safe`);
+    return true;
+  }
+  console.log(`    → No dupes found for any URL variant`);
+  return false;
 }
 
 async function getSignedPost(type, size, width, height) {
@@ -696,6 +736,17 @@ async function main() {
   }
 
   const { sk } = await nostrLogin();
+
+  console.log('Fetching recent Design posts from Stacker News...');
+  const snUrls = await fetchRecentDesignUrls();
+  console.log(`Found ${snUrls.size} existing URL(s) on SN.`);
+  for (const url of snUrls) {
+    if (!postedUrls.has(url)) {
+      postedUrls.add(url);
+    }
+  }
+  savePostedUrlCache(null);
+  console.log(`Cache now has ${postedUrls.size} URL(s).`);
 
   if (posts.length > 0) {
     if (await tryPostOne(posts, sk)) return;
