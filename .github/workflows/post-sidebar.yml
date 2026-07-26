@@ -12,6 +12,10 @@ on:
         description: 'Preview posts without actually posting to Stacker News'
         type: boolean
         default: false
+      SKIP_DELAY:
+        description: 'Skip the random 0-11 min delay'
+        type: boolean
+        default: false
 
 jobs:
   post:
@@ -39,7 +43,7 @@ jobs:
           key: posted-urls-v1
 
       - name: Random delay (0-11 min) for posting window
-        if: ${{ !inputs.DRY_RUN }}
+        if: ${{ !inputs.DRY_RUN && !inputs.SKIP_DELAY }}
         run: sleep $(( RANDOM % 660 ))
 
       - name: Post one sidebar link to Stacker News
