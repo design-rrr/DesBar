@@ -174,13 +174,28 @@ async function nostrLogin() {
   const pubkey = getPublicKey(sk);
 
   console.log('Requesting auth challenge...');
-  const authRes = await fetch(SN_GRAPHQL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      query: `mutation createAuth { createAuth { k1 } }`,
-    }),
-  });
+  let authRes;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      authRes = await fetch(SN_GRAPHQL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          query: `mutation createAuth { createAuth { k1 } }`,
+        }),
+      });
+      break;
+    } catch (err) {
+      const wait = (attempt + 1) * 5000;
+      console.log(`  Auth challenge attempt ${attempt + 1} failed: ${err.message}`);
+      if (attempt < 4) {
+        console.log(`  Retrying in ${wait / 1000}s...`);
+        await delay(wait);
+      } else {
+        throw new Error(`Auth challenge failed after 5 attempts: ${err.message}`);
+      }
+    }
+  }
   if (!authRes.ok) {
     const text = await authRes.text();
     throw new Error(`createAuth returned ${authRes.status}: ${text}`);
@@ -227,20 +242,35 @@ async function nostrLogin() {
   if (!csrfToken) throw new Error('Could not obtain CSRF token');
 
   console.log('Authenticating with Nostr...');
-  const loginRes = await fetch(`${SN_BASE}/api/auth/callback/nostr`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-      cookie: getCookieHeader(),
-    },
-    body: new URLSearchParams({
-      csrfToken,
-      event: JSON.stringify(signedEvent),
-      callbackUrl: SN_BASE,
-      json: 'true',
-    }),
-    redirect: 'manual',
-  });
+  let loginRes;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      loginRes = await fetch(`${SN_BASE}/api/auth/callback/nostr`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          cookie: getCookieHeader(),
+        },
+        body: new URLSearchParams({
+          csrfToken,
+          event: JSON.stringify(signedEvent),
+          callbackUrl: SN_BASE,
+          json: 'true',
+        }),
+        redirect: 'manual',
+      });
+      break;
+    } catch (err) {
+      const wait = (attempt + 1) * 5000;
+      console.log(`  Login attempt ${attempt + 1} failed: ${err.message}`);
+      if (attempt < 4) {
+        console.log(`  Retrying in ${wait / 1000}s...`);
+        await delay(wait);
+      } else {
+        throw new Error(`Login failed after 5 attempts: ${err.message}`);
+      }
+    }
+  }
 
   setCookies(loginRes.headers.getSetCookie());
 
