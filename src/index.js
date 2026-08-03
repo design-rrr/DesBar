@@ -44,6 +44,14 @@ function savePostedUrlCache(url) {
 
 const postedUrls = loadPostedUrls();
 
+const TRACKING_PARAMS = new Set([
+  'ref', 'ref_source', 'via', 'dub_id', 'source', 'si', 'sk',
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+  'mc_cid', 'mc_eid', 'fbclid', 'gclid', 'igshid', 'twclid', 'spm',
+  'affiliate', 'gad_source', 'gbraid', 'wbraid', 'yclid', 'mkt_tok', 'bnx_gid',
+  'at_medium', 'at_campaign', 'at_custom', 'at_custom1', 'at_custom2',
+]);
+
 function normalizeUrl(url) {
   try {
     const u = new URL(url);
@@ -52,7 +60,7 @@ function normalizeUrl(url) {
     u.hash = '';
     const keep = [];
     for (const [k, v] of u.searchParams) {
-      if (['ref', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'si', 'sk', 'source'].includes(k)) continue;
+      if (TRACKING_PARAMS.has(k.toLowerCase())) continue;
       keep.push(`${k}=${v}`);
     }
     keep.sort();
@@ -61,6 +69,22 @@ function normalizeUrl(url) {
   } catch {
     return url;
   }
+}
+
+async function resolveUrl(url) {
+  for (const method of ['HEAD', 'GET']) {
+    try {
+      const res = await fetch(url, {
+        method,
+        redirect: 'follow',
+        signal: AbortSignal.timeout(15000),
+      });
+      return normalizeUrl(res.url || url);
+    } catch (err) {
+      console.log(`  ${method} resolve failed (${err.message})`);
+    }
+  }
+  return normalizeUrl(url);
 }
 
 
@@ -363,9 +387,9 @@ async function fetchRecentDesignUrls() {
   return urls;
 }
 
-async function isAlreadyPosted(url) {
+async function isAlreadyPosted(url, extraVariants = []) {
   const normalUrl = normalizeUrl(url);
-  const variants = normalUrl !== url ? [normalUrl, url] : [normalUrl];
+  const variants = new Set([normalUrl, url, ...extraVariants].filter(Boolean));
   let anySucceeded = false;
   for (const variant of variants) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -580,10 +604,22 @@ async function postItem(item, sk) {
     return null;
   }
 
+  const normalUrl = normalizeUrl(item.url);
+  console.log('  Resolving redirects...');
+  const cleanUrl = await resolveUrl(item.url);
+  if (cleanUrl !== normalUrl) console.log(`  Clean URL: ${cleanUrl}`);
+
+  if (postedUrls.has(normalUrl) || postedUrls.has(cleanUrl)) {
+    console.log('  Already posted (cache), skipping.');
+    savePostedUrlCache(normalUrl);
+    savePostedUrlCache(cleanUrl);
+    return null;
+  }
+
   let imageBuffer, imageType, width, height;
   try {
     console.log('  Taking screenshot...');
-    const shot = await takeScreenshot(item.url);
+    const shot = await takeScreenshot(cleanUrl);
     imageBuffer = shot.buffer;
     imageType = shot.type;
     width = shot.width;
@@ -622,16 +658,14 @@ async function postItem(item, sk) {
   const description = formatDescription(item.description, item.categories);
   const snText = snImageUrl ? `![](${snImageUrl})\n\n${description}` : description;
 
-  const normalUrl = normalizeUrl(item.url);
-
   console.log('  Checking dupe on SN one more time...');
-  if (await isAlreadyPosted(normalUrl)) {
+  if (await isAlreadyPosted(cleanUrl, [normalUrl])) {
     console.log('  Already on Stacker News (re-checked), skipping.');
     return null;
   }
 
   console.log('  Creating Stacker News post...');
-  const postId = await postLink(normalUrl, item.title, snText);
+  const postId = await postLink(cleanUrl, item.title, snText);
   const snUrl = `https://stacker.news/items/${postId}/r/deSign_r`;
   console.log(`  Posted! ${snUrl}`);
 
@@ -652,6 +686,7 @@ async function postItem(item, sk) {
   }
 
   savePostedUrlCache(normalUrl);
+  savePostedUrlCache(cleanUrl);
 
   return postId;
 }
