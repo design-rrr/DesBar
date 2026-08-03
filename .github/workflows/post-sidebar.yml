@@ -40,7 +40,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: posted-urls.json
-          key: posted-urls-v1
+          key: posted-urls-${{ github.run_id }}
+          restore-keys: posted-urls-
 
       - name: Random delay (0-11 min) for posting window
         if: ${{ !inputs.DRY_RUN && !inputs.SKIP_DELAY }}
@@ -61,4 +62,4 @@ jobs:
         if: always()
         with:
           path: posted-urls.json
-          key: posted-urls-v1
+          key: posted-urls-${{ github.run_id }}
