@@ -3,7 +3,6 @@ name: Post Sidebar Links
 on:
   schedule:
     - cron: '11 11 * * *'
-    - cron: '12 12 * * *'
     - cron: '14 14 * * *'
   workflow_dispatch:
     inputs:
