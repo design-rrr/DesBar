@@ -2,8 +2,8 @@ name: Post Sidebar Links
 
 on:
   schedule:
-    - cron: '11 11 * * *'
-    - cron: '15 15 * * *'
+    - cron: '10 10 * * *'
+    - cron: '16 16 * * *'
   workflow_dispatch:
     inputs:
       DRY_RUN:
