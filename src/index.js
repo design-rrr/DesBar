@@ -361,28 +361,20 @@ async function snApiCall(query, variables) {
 
 async function fetchRecentDesignUrls() {
   const urls = new Set();
-  let cursor = null;
-  for (let page = 0; page < 6; page++) {
-    try {
-      const afterArg = cursor ? `, after: "${cursor}"` : '';
-      const data = await snApiCall(`
-        {
-          items(sub: "${SUB_NAME}", sort: "recent", limit: 50${afterArg}) {
-            items { url }
-            cursor
-          }
+  try {
+    const data = await snApiCall(`
+      {
+        items(sub: "${SUB_NAME}", sort: "recent", limit: 100) {
+          items { url }
         }
-      `);
-      const items = data.items?.items || [];
-      for (const item of items) {
-        if (item.url) urls.add(normalizeUrl(item.url));
       }
-      cursor = data.items?.cursor;
-      if (!cursor || items.length === 0) break;
-    } catch (err) {
-      console.log(`  Failed to fetch Design items page ${page + 1}: ${err.message}`);
-      break;
+    `);
+    const items = data.items?.items || [];
+    for (const item of items) {
+      if (item.url) urls.add(normalizeUrl(item.url));
     }
+  } catch (err) {
+    console.log(`  Failed to fetch Design items: ${err.message}`);
   }
   return urls;
 }
@@ -715,6 +707,11 @@ async function tryPostOne(posts, sk) {
   for (const item of posts) {
     const normalUrl = normalizeUrl(item.url);
     console.log(`\nChecking: ${item.title}`);
+
+    if (item.title.length < 5) {
+      console.log('  Title too short (< 5 chars), skipping.');
+      continue;
+    }
 
     if (postedUrls.has(normalUrl)) {
       console.log('  Already posted (cache), skipping.');
