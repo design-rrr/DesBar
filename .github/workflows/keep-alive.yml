@@ -1,0 +1,26 @@
+name: Keep Alive
+
+on:
+  schedule:
+    - cron: '30 3 * * 1'  # Every Monday at 03:30 UTC
+  workflow_dispatch:
+
+jobs:
+  touch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update keep-alive timestamp
+        run: echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .keepalive
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git diff --cached --quiet || git commit -m "keep-alive: weekly touch"
+          git push
