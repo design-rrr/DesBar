@@ -24,6 +24,14 @@ const NOSTR_RELAYS = [
 
 const CACHE_FILE = join(__dirname, '..', 'posted-urls.json');
 
+class FeeEscalationError extends Error {
+  constructor (repetition) {
+    super(`[fee-gate] blocked: itemRepetition=${repetition}; multiplier would be ${10 ** repetition}x (this account posted within the last 10 min)`);
+    this.name = 'FeeEscalationError';
+    this.repetition = repetition;
+  }
+}
+
 function loadPostedUrls() {
   try {
     const arr = JSON.parse(readFileSync(CACHE_FILE, 'utf8'));
@@ -340,6 +348,48 @@ function formatDescription(description, categories) {
   return `${description}\n\n- - -\n\n${hashtags}`;
 }
 
+function feeConfig () {
+  const num = (v, dflt) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : dflt;
+  };
+  return {
+    maxMultiplier: num(process.env.SN_MAX_FEE_MULTIPLIER, 1),
+    maxRetries: (() => {
+      const n = Number(process.env.SN_FEE_MAX_RETRIES);
+      return Number.isFinite(n) && n >= 0 ? n : 2;
+    })(),
+    retryMin: num(process.env.SN_FEE_RETRY_MIN, 10),
+    mode: process.env.SN_FEE_RETRY_MODE || 'sleep'
+  };
+}
+
+async function feeRepetition (parentId = null) {
+  const data = await snApiCall(
+    'query FeeRepetition($parentId: ID) { itemRepetition(parentId: $parentId) }',
+    { parentId: parentId ? String(parentId) : null }
+  );
+  return Number(data?.itemRepetition || 0);
+}
+
+// Pre-flight fee gate: query the authoritative itemRepetition exponent BEFORE
+// creating anything, and refuse to act if the multiplier would exceed the cap.
+async function feeSafe (parentId, action) {
+  const { maxMultiplier, maxRetries, retryMin, mode } = feeConfig();
+  let attempt = 0;
+  for (;;) {
+    const rep = await feeRepetition(parentId);
+    if (10 ** rep <= maxMultiplier) return action();
+    if (mode === 'skip' || attempt >= maxRetries) {
+      throw new FeeEscalationError(rep);
+    }
+    attempt += 1;
+    const waitMs = retryMin * 60_000 + Math.round(Math.random() * 60_000);
+    console.log(`[fee-gate] repetition=${rep} (would pay ${10 ** rep}x, cap ${maxMultiplier}x) — sleeping ${Math.round(waitMs / 60_000)} min, retry ${attempt}/${maxRetries}`);
+    await delay(waitMs);
+  }
+}
+
 async function snApiCall(query, variables) {
   const res = await fetch(SN_GRAPHQL, {
     method: 'POST',
@@ -547,11 +597,12 @@ async function takeScreenshot(url) {
 }
 
 async function postLink(url, title, text) {
-  const data = await snApiCall(`
+  const data = await feeSafe(null, () => snApiCall(`
     mutation upsertLink($subNames: [String!]!, $title: String!, $url: String!, $text: String) {
       upsertLink(subNames: $subNames, title: $title, url: $url, text: $text) {
         id
         payInState
+        mcost
         payerPrivates {
           result {
             ... on Item { id }
@@ -560,7 +611,7 @@ async function postLink(url, title, text) {
         }
       }
     }
-  `, { url, title, text, subNames: [SUB_NAME] });
+  `, { url, title, text, subNames: [SUB_NAME] }));
 
   const payIn = data.upsertLink;
   if (payIn.payInState === 'PAID') {
