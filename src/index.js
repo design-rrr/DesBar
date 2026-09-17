@@ -364,10 +364,35 @@ function feeConfig () {
   };
 }
 
+// itemRepetition() is authoritative only for comments (real parent id). For a ROOT post
+// the resolver does Number(parentId), and Number(null) === 0 makes item_spam(0, user) always
+// match nothing, so it ALWAYS returns 0 for new posts — the preflight stayed blind while the
+// 10x spend still applied (the DesBar/1575002 collision). For root posts we count this
+// account's own root posts (parentId === null) created within SN's ITEM_SPAM_INTERVAL ('10m'),
+// which is exactly item_spam(NULL, me.id).
+const FEE_SPAM_WINDOW_MS = 10 * 60 * 1000;
+
+async function recentRootRepetition () {
+  const me = await snApiCall('query Me { me { name } }');
+  const name = me?.me?.name;
+  if (!name) return 0;
+  const res = await snApiCall(
+    'query RecentRoots($name: String!) { items(name: $name, sort: "user", limit: 100) { items { id parentId createdAt } } }',
+    { name }
+  );
+  const now = Date.now();
+  return (res?.items || []).filter((item) =>
+    item.parentId === null && now - Date.parse(item.createdAt) <= FEE_SPAM_WINDOW_MS
+  ).length;
+}
+
 async function feeRepetition (parentId = null) {
+  if (parentId === null || parentId === undefined) {
+    return recentRootRepetition();
+  }
   const data = await snApiCall(
     'query FeeRepetition($parentId: ID) { itemRepetition(parentId: $parentId) }',
-    { parentId: parentId ? String(parentId) : null }
+    { parentId: String(parentId) }
   );
   return Number(data?.itemRepetition || 0);
 }
