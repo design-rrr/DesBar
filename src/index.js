@@ -381,7 +381,7 @@ async function recentRootRepetition () {
     { name }
   );
   const now = Date.now();
-  return (res?.items || []).filter((item) =>
+  return (res?.items?.items || []).filter((item) =>
     item.parentId === null && now - Date.parse(item.createdAt) <= FEE_SPAM_WINDOW_MS
   ).length;
 }
@@ -415,7 +415,10 @@ async function feeSafe (parentId, action) {
   }
 }
 
-async function snApiCall(query, variables) {
+let _reauthFn = null;
+function setReauthFn(fn) { _reauthFn = fn; }
+
+async function snApiCall(query, variables, { allowReauth = true } = {}) {
   const res = await fetch(SN_GRAPHQL, {
     method: 'POST',
     headers: {
@@ -427,7 +430,19 @@ async function snApiCall(query, variables) {
 
   setCookies(res.headers.getSetCookie());
 
-  const json = await res.json();
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    if (allowReauth && _reauthFn) {
+      console.log(`  SN API returned non-JSON (${text.slice(0, 40)}…), re-authenticating…`);
+      await _reauthFn();
+      return snApiCall(query, variables, { allowReauth: false });
+    }
+    throw new Error(`SN API returned non-JSON: ${text.slice(0, 80)}`);
+  }
+
   if (json.errors) {
     throw new Error(`SN API error: ${JSON.stringify(json.errors)}`);
   }
@@ -480,8 +495,8 @@ async function isAlreadyPosted(url, extraVariants = []) {
     }
   }
   if (!anySucceeded) {
-    console.log(`    → All dupe checks failed, treating as duplicate to be safe`);
-    return true;
+    console.log(`    → All dupe checks failed, attempting post anyway (fail-open)`);
+    return false;
   }
   console.log(`    → No dupes found for any URL variant`);
   return false;
@@ -844,6 +859,11 @@ async function main() {
   }
 
   const { sk } = await nostrLogin();
+
+  setReauthFn(async () => {
+    console.log('  Re-authenticating with SN…');
+    await nostrLogin();
+  });
 
   console.log('Fetching recent Design posts from Stacker News...');
   const snUrls = await fetchRecentDesignUrls();
